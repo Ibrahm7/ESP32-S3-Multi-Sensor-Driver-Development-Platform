@@ -1,152 +1,56 @@
-#include <stdio.h>
-
+#include "esp_adc/adc_oneshot.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
-#include "freertos/semphr.h"
-
 #include "driver/gpio.h"
 
-#include "esp_log.h"
-#include "esp_err.h"
+static const char* TAG = "AD8232";
 
-static const char* TAG = "fake_adc_task";
-static const char* TAG2 = "processing_Task";
+#define AD8232_ADC_CHANNEL ADC_CHANNEL_3 //GPIO4
+#define LO_PLUS_PIN  GPIO_NUM_5  // senin bagladigin pine gore degistir
+#define LO_MINUS_PIN GPIO_NUM_6
+static adc_oneshot_unit_handle_t adc_handle;
 
-#define BUTTON_GPIO GPIO_NUM_0
+void ad8232_adc_init(void){
+    adc_oneshot_unit_init_cfg_t init_config = {
+        .unit_id = ADC_UNIT_1,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config,&adc_handle));
 
-static QueueHandle_t adc_queue;
-static QueueHandle_t lo_event_queue;
+    adc_oneshot_chan_cfg_t chan_config = {
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+        .atten = ADC_ATTEN_DB_12,
+    };
 
-static int shared_sample_count = 0;
-static SemaphoreHandle_t shared_data_mutex;
+    gpio_config_t lo_conf = {
+    .pin_bit_mask = (1ULL << LO_PLUS_PIN) | (1ULL << LO_MINUS_PIN),
+    .mode = GPIO_MODE_INPUT,
+    .pull_up_en = GPIO_PULLUP_DISABLE,
+    .pull_down_en = GPIO_PULLDOWN_DISABLE,
+    };
+    gpio_config(&lo_conf);
 
-void fake_adc_task(void* arg){
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle,AD8232_ADC_CHANNEL,&chan_config));
+}
+
+void ad8232_sampling_task(void* pvParam){
     const TickType_t period = pdMS_TO_TICKS(4);
     TickType_t last_wake_time = xTaskGetTickCount();
 
-    int value = 0;
+    int raw;
 
     while(1){
-        if(xQueueSend(adc_queue,&value,0) != pdTRUE){
-        ESP_LOGW(TAG,"ADC queue dolu, deger kayboldu: %d",value);
-        }
-        value++;
+        ESP_ERROR_CHECK(adc_oneshot_read(adc_handle,AD8232_ADC_CHANNEL,&raw));
+        int lo_plus = gpio_get_level(LO_PLUS_PIN);
+        int lo_minus = gpio_get_level(LO_MINUS_PIN);
+        ESP_LOGI(TAG, "Ham: %d | LO+: %d | LO-: %d", raw, lo_plus, lo_minus);
 
         vTaskDelayUntil(&last_wake_time,period);
-    }
-
-}
-
-void processing_task(void* arg){
-    int receivedVal;
-    while(1){
-        if(xQueueReceive(adc_queue,&receivedVal,portMAX_DELAY) == pdTRUE){
-            if(receivedVal % 50 == 0){
-                xSemaphoreTake(shared_data_mutex,portMAX_DELAY);
-                shared_sample_count++;
-                xSemaphoreGive(shared_data_mutex);
-
-                ESP_LOGW(TAG2,"İstatistik Güncellemesi: Örnek=%d, toplam=%d",receivedVal,shared_sample_count);
-            }
-        }
-    }
-}
-
-void IRAM_ATTR button_isr_handler(void* arg){
-    uint32_t gpio_num = (uint32_t)arg;
-
-    BaseType_t higher_priority_task_woken = pdFALSE;
-
-    xQueueSendFromISR(lo_event_queue,&gpio_num,&higher_priority_task_woken);
-
-    if(higher_priority_task_woken){
-        portYIELD_FROM_ISR();
-    }
-}
-
-void button_init(void){
-    gpio_config_t io_conf  = {
-        .pin_bit_mask = 1ULL << BUTTON_GPIO,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_ANYEDGE
-    };
-    ESP_ERROR_CHECK(gpio_config(&io_conf ));
-
-    ESP_ERROR_CHECK(gpio_install_isr_service(0));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(BUTTON_GPIO,button_isr_handler,(void*)BUTTON_GPIO));
-}
-
-void lo_event_task(void* arg){
-    uint32_t gpio_num;
-
-    while(1){
-        if(xQueueReceive(lo_event_queue,&gpio_num,portMAX_DELAY)==pdTRUE){
-            xSemaphoreTake(shared_data_mutex,portMAX_DELAY);
-            int current_count  = shared_sample_count;
-            xSemaphoreGive(shared_data_mutex);
-
-            ESP_LOGI(
-                "LO_EVENT",
-                "LO olayi tetiklendi, o ana kadar islenen toplam ornek: %d",
-                current_count
-            );
-        }
     }
 }
 
 void app_main(void){
-    ESP_LOGI(
-        "MAIN",
-        "Sistem baslatiliyor..."
-    );
+    ad8232_adc_init();
 
-    adc_queue = xQueueCreate(20,sizeof(int));
-
-     if (adc_queue == NULL)
-    {
-        ESP_LOGE(
-            "MAIN",
-            "ADC queue olusturulamadi!"
-        );
-
-        return;
-    }
-
-    lo_event_queue = xQueueCreate(10,sizeof(uint32_t));
-
-     if (lo_event_queue == NULL)
-    {
-        ESP_LOGE(
-            "MAIN",
-            "LO queue olusturulamadi!"
-        );
-
-        return;
-    }
-
-    shared_data_mutex = xSemaphoreCreateMutex();
-
-     if (shared_data_mutex == NULL)
-    {
-        ESP_LOGE(
-            "MAIN",
-            "Mutex olusturulamadi!"
-        );
-
-        return;
-    }
-
-    button_init();
-
-    xTaskCreate(fake_adc_task,"fake_adc_task",2048,NULL,5,NULL);
-    xTaskCreate(processing_task,"processing_task",2048,NULL,5,NULL);
-    xTaskCreate(lo_event_task,"lo_event_task",2048,NULL,5,NULL);
-
-    ESP_LOGI(
-        "MAIN",
-        "Tum sistem baslatildi."
-    );
+    xTaskCreate(ad8232_sampling_task,"ad8232_sampling",4096,NULL,6,NULL);
 }
