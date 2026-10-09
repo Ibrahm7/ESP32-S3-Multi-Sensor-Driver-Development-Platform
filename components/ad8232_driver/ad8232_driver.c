@@ -18,7 +18,7 @@ static TaskHandle_t ad8232_task_handle = NULL;
 
 esp_err_t ad8232_init(const ad8232_config_t *config, QueueHandle_t sample_queue)
 {
-    sample_queue = queue;
+    queue = sample_queue;
 
 
     if(config == NULL || sample_queue == NULL){
