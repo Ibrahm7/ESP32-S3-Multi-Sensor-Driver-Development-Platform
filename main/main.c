@@ -1,56 +1,48 @@
-#include "esp_adc/adc_oneshot.h"
+#include "esp_adc/adc_continuous.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
+#include "ad8232_driver.h"
 #include "driver/gpio.h"
 
-static const char* TAG = "AD8232";
+    // 1) Queue oluştur: xQueueCreate(uzunluk, eleman_boyutu)
+    //    NULL dönerse logla ve return et.
+    // 2) ad8232_config_t değişkenini doldur.
+    // 3) ad8232_init(&cfg, queue) çağır, sonucu kontrol et.
+    // 4) ad8232_start() çağır, sonucu kontrol et.
 
-#define AD8232_ADC_CHANNEL ADC_CHANNEL_3 //GPIO4
-#define LO_PLUS_PIN  GPIO_NUM_5  // senin bagladigin pine gore degistir
-#define LO_MINUS_PIN GPIO_NUM_6
-static adc_oneshot_unit_handle_t adc_handle;
+static const char* TAG = "main";
 
-void ad8232_adc_init(void){
-    adc_oneshot_unit_init_cfg_t init_config = {
-        .unit_id = ADC_UNIT_1,
-    };
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config,&adc_handle));
+static QueueHandle_t my_queue;
 
-    adc_oneshot_chan_cfg_t chan_config = {
-        .bitwidth = ADC_BITWIDTH_DEFAULT,
-        .atten = ADC_ATTEN_DB_12,
-    };
 
-    gpio_config_t lo_conf = {
-    .pin_bit_mask = (1ULL << LO_PLUS_PIN) | (1ULL << LO_MINUS_PIN),
-    .mode = GPIO_MODE_INPUT,
-    .pull_up_en = GPIO_PULLUP_DISABLE,
-    .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    };
-    gpio_config(&lo_conf);
-
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle,AD8232_ADC_CHANNEL,&chan_config));
-}
-
-void ad8232_sampling_task(void* pvParam){
-    const TickType_t period = pdMS_TO_TICKS(4);
-    TickType_t last_wake_time = xTaskGetTickCount();
-
-    int raw;
-
-    while(1){
-        ESP_ERROR_CHECK(adc_oneshot_read(adc_handle,AD8232_ADC_CHANNEL,&raw));
-        int lo_plus = gpio_get_level(LO_PLUS_PIN);
-        int lo_minus = gpio_get_level(LO_MINUS_PIN);
-        ESP_LOGI(TAG, "Ham: %d | LO+: %d | LO-: %d", raw, lo_plus, lo_minus);
-
-        vTaskDelayUntil(&last_wake_time,period);
-    }
-}
 
 void app_main(void){
-    ad8232_adc_init();
+    my_queue = xQueueCreate(10,sizeof(uint16_t));
+    if(my_queue == NULL){
+        ESP_LOGE(TAG,"my_queue is Null");
+        return;
+    }
 
-    xTaskCreate(ad8232_sampling_task,"ad8232_sampling",4096,NULL,6,NULL);
+    ad8232_config_t ad8232_conf = {
+        .output_adc_channel = ADC_CHANNEL_3,
+        .lo_plus_gpio = GPIO_NUM_5,
+        .lo_minus_gpio = GPIO_NUM_6,
+        .adc_sample_freq_hz = 2000,
+        .output_sample_freq_hz = 250
+    };
+
+    esp_err_t ret = ad8232_init(&ad8232_conf,my_queue);
+
+    if(ret != ESP_OK){
+        ESP_LOGE(TAG,"ad8232_init hatası %s",esp_err_to_name(ret));
+        return;
+    }
+
+    ret = ad8232_start();
+    if(ret != ESP_OK){
+        ESP_LOGE(TAG,"ad8232_start hatası %s",esp_err_to_name(ret));
+        return;
+    }
 }

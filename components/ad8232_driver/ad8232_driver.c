@@ -18,13 +18,15 @@ static TaskHandle_t ad8232_task_handle = NULL;
 
 esp_err_t ad8232_init(const ad8232_config_t *config, QueueHandle_t sample_queue)
 {
-    queue = sample_queue;
 
 
     if(config == NULL || sample_queue == NULL){
         ESP_LOGE(TAG, "config veya sample_queue NULL!");
         return ESP_ERR_INVALID_ARG;
     }
+
+    queue = sample_queue;
+
 
     if(config->adc_sample_freq_hz < ESP32_MIN_FREQ_HZ || config->adc_sample_freq_hz > ESP32_MAX_FREQ_HZ){
         ESP_LOGE(TAG,"Geçersiz ADC Örnekleme Hızı: %lu Hz",(unsigned long)config->adc_sample_freq_hz);
@@ -57,9 +59,10 @@ esp_err_t ad8232_init(const ad8232_config_t *config, QueueHandle_t sample_queue)
         return ret;
     }
     
+    //ADC'nin hangi kanaldan ölçüm alacağını belirliyoruz.
     adc_digi_pattern_config_t pat = {
         .atten = ADC_ATTEN_DB_12,
-        .bit_width = SOC_ADC_DIGI_MAX_BITWIDTH,
+        .bit_width = SOC_ADC_DIGI_MAX_BITWIDTH, //ADC dijital dönüşümünde kullanılacak bit genişliğini çip için tanımlanmış maksimum değere ayarlar.
         .channel = config->output_adc_channel,
         .unit = ADC_UNIT_1
     };
@@ -67,9 +70,9 @@ esp_err_t ad8232_init(const ad8232_config_t *config, QueueHandle_t sample_queue)
     adc_continuous_config_t adc_config = {
         .adc_pattern = &pat,
         .sample_freq_hz = config->adc_sample_freq_hz,
-        .pattern_num = 1,
-        .conv_mode = ADC_CONV_SINGLE_UNIT_1,
-        .format = ADC_DIGI_OUTPUT_FORMAT_TYPE2
+        .pattern_num = 1, //Dönüşüm deseninde bir eleman olduğunu belirtiyoruz. Önceki yapılandırmada yalnızca bir ADC kanalı tanımladığımız için burada 1 kullanıyoruz.
+        .conv_mode = ADC_CONV_SINGLE_UNIT_1, //pat yapısındaki .unit = ADC_UNIT_1 birbiriyle uyumlu olmalıdır.
+        .format = ADC_DIGI_OUTPUT_FORMAT_TYPE2 //ADC sürücüsünden dönen ham sonuçların veri formatını seçiyoruz.
     };
 
     ret = adc_continuous_config(adc_handle,&adc_config);
@@ -85,7 +88,7 @@ esp_err_t ad8232_init(const ad8232_config_t *config, QueueHandle_t sample_queue)
 }
 
 static void ad8232_read_task(void* param){
-    uint8_t buffer[256]; //ADC sürücüsünden okuduğun verileri saklayacağın yer burası.
+    uint8_t buffer[256]; //ADC sürücüsünden okuduğun ham verileri saklayacağın yer burası.
     uint32_t out_length  = 0;
     while(1){
         esp_err_t ret = adc_continuous_read(adc_handle,buffer,sizeof(buffer),&out_length,1000);

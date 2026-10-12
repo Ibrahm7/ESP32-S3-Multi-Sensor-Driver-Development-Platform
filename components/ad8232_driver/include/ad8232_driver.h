@@ -13,9 +13,11 @@ typedef struct {
     int lo_plus_gpio;
     int lo_minus_gpio;
 
-    uint32_t adc_sample_freq_hz;  // ADC ham örnekleme hızı, birimi Hz
-    uint32_t output_sample_freq_hz; // Decimation sonrası çıkış hızı, birimi Hz
+    uint32_t adc_sample_freq_hz;  // ADC ham örnekleme hızı, birimi Hz, ADC'nin saniyede kaç örnek almasının hedeflendiğini belirtir.
+    uint32_t output_sample_freq_hz; // Decimation sonrası çıkış hızı, birimi Hz, ADC örnekleri azaltıldıktan sonra dışarıya sunulması hedeflenen örnekleme hızını tutar.
 } ad8232_config_t;
+
+//Decimation, bir sinyalin örnekleme hızını düşürmek için belirli örnekleri seçerek veya uygun filtreleme uygulayarak örnek sayısını azaltma işlemidir.
 
 esp_err_t ad8232_init(const ad8232_config_t* config, QueueHandle_t sample_queue);
 
